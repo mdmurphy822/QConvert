@@ -1,75 +1,75 @@
-import re
-import pandas as pd
 import streamlit as st
-from io import BytesIO
+import pandas as pd
+import re
 from docx import Document
+from io import BytesIO
 
-def convert_docx_to_vertical_csv(docx_bytes):
-    doc = Document(docx_bytes)
+def embedded_block_parser_from_docx(docx_file):
+    doc = Document(docx_file)
     lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-
-    questions = []
-    current_question = {}
+    vertical_rows = []
 
     for line in lines:
-        if re.match(r'^\d+\.', line):  # Start of new question
-            if current_question:
-                questions.append(current_question)
-            current_question = {"question": line, "options": [], "answer": ""}
-        elif re.match(r'^[A-Da-d]\.', line):  # Multiple choice option
-            current_question["options"].append(line)
-        elif line.lower().startswith("answer:"):
-            current_question["answer"] = line
-    if current_question:
-        questions.append(current_question)
+        parts = re.split(r'(?=[A-Da-d]\.)', line)
+        if len(parts) < 5:
+            continue  # skip malformed lines
 
-    vertical_rows = []
-    for i, q in enumerate(questions, start=1):
-        question_text = re.sub(r'^\d+\.\s*', '', q["question"]).strip()
-        correct_answer_line = re.sub(r'^Answer:\s*', '', q["answer"], flags=re.IGNORECASE).strip()
+        question_raw = parts[0]
+        options_raw = parts[1:5]
 
-        correct_letter_match = re.match(r'^([A-Da-d])', correct_answer_line)
-        correct_letter = correct_letter_match.group(1).upper() if correct_letter_match else ""
+        # Extract clean question
+        question_text = re.sub(r'^\d+\.\s*', '', question_raw).strip()
+
+        # Extract and remove embedded answer from last option
+        answer_match = re.search(r'Answer:\s*([A-Da-d])', options_raw[3], re.IGNORECASE)
+        answer_letter = answer_match.group(1).upper() if answer_match else ""
+        options_raw[3] = re.sub(r'Answer:\s*[A-Da-d]', '', options_raw[3], flags=re.IGNORECASE).strip()
 
         vertical_rows.append(["NewQuestion", "MC"])
-        vertical_rows.append(["ID", f"Q_{i:03d}"])
-        vertical_rows.append(["Title", f"Question {i}"])
+        vertical_rows.append(["ID", ""])
+        vertical_rows.append(["Title", ""])
         vertical_rows.append(["QuestionText", question_text])
         vertical_rows.append(["Points", 1])
         vertical_rows.append(["Difficulty", 1])
         vertical_rows.append(["Image", ""])
 
-        # Insert Options with proper Brightspace formatting
-        for option in q["options"]:
-            opt_match = re.match(r'^([A-Da-d])\.\s*(.*)', option)
-            if not opt_match:
+        for opt in options_raw:
+            match = re.match(r'^([A-Da-d])\.\s*(.*)', opt.strip())
+            if not match:
                 continue
-            opt_letter, opt_text = opt_match.groups()
-            weight = "100" if opt_letter.upper() == correct_letter else "0"
-            vertical_rows.append(["Option", weight, opt_text.strip()])
+            letter, text = match.groups()
+            weight = "100" if letter.upper() == answer_letter else "0"
+            vertical_rows.append(["Option", weight, text.strip()])
 
         vertical_rows.append(["Hint", ""])
         vertical_rows.append(["Feedback", ""])
-        vertical_rows.append([])  # Blank line separates questions
+        vertical_rows.append([])
 
-    df = pd.DataFrame(vertical_rows)
-    csv_buffer = BytesIO()
-    df.to_csv(csv_buffer, index=False, header=False, encoding='utf-8')
-    csv_buffer.seek(0)
-    return csv_buffer
+    return pd.DataFrame(vertical_rows)
 
-# Streamlit UI
-st.title("📄 DOCX to Brightspace MCQ CSV Converter")
+# --- Streamlit App ---
+st.set_page_config(page_title="DOCX to Brightspace Quiz", layout="wide")
+st.title("📄 DOCX to Brightspace Quiz Converter")
 
-uploaded_file = st.file_uploader("Upload your quiz .docx file", type="docx")
+uploaded_file = st.file_uploader("Upload your .docx quiz file", type=["docx"])
 
 if uploaded_file:
-    if st.button("Convert to Brightspace CSV"):
-        csv_output = convert_docx_to_vertical_csv(uploaded_file)
-        st.success("✅ Conversion complete!")
+    try:
+        df = embedded_block_parser_from_docx(uploaded_file)
+
+        st.success("✅ File successfully parsed!")
+        st.dataframe(df, use_container_width=True)
+
+        # Export to CSV for download
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Download CSV File",
-            data=csv_output,
+            label="📥 Download Brightspace CSV",
+            data=csv_bytes,
             file_name="converted_quiz.csv",
             mime="text/csv"
         )
+
+    except Exception as e:
+        st.error(f"⚠️ Error processing file: {str(e)}")
+else:
+    st.info("Please upload a .docx file to begin.")
