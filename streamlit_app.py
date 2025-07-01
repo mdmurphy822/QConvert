@@ -1,41 +1,34 @@
-import pandas as pd
 import re
+import pandas as pd
+import streamlit as st
+from io import BytesIO
 from docx import Document
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename
-import os
 
-def convert_docx_to_vertical_csv(docx_path, output_csv_path):
-    doc = Document(docx_path)
+def convert_docx_to_vertical_csv(docx_bytes):
+    doc = Document(docx_bytes)
     lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
     questions = []
     current_question = {}
 
     for line in lines:
-        if re.match(r'^\d+\.', line):
+        if re.match(r'^\d+\.', line):  # Start of new question
             if current_question:
                 questions.append(current_question)
             current_question = {"question": line, "options": [], "answer": ""}
-        elif re.match(r'^[A-Da-d]\.', line):
+        elif re.match(r'^[A-Da-d]\.', line):  # MC option
             current_question["options"].append(line)
-        elif line.lower().startswith("answer:"):
+        elif line.lower().startswith("answer:"):  # Answer line
             current_question["answer"] = line
     if current_question:
         questions.append(current_question)
 
     vertical_rows = []
     for i, q in enumerate(questions, start=1):
-        question_text = re.sub(r'^\d+\.\s*', '', q["question"]).strip('"“”')
-        correct_answer_letter = re.sub(r'^Answer:\s*', '', q["answer"], flags=re.IGNORECASE).strip('"“”')
-
-        # Match the letter to the full option text
-        correct_option_text = ""
-        for opt in q["options"]:
-            letter, text = opt.split('.', 1)
-            if letter.strip().lower() == correct_answer_letter.strip().lower():
-                correct_option_text = text.strip(' "“”')
-                break
+        question_text = re.sub(r'^\d+\.\s*', '', q["question"]).strip('“”"')
+        correct_line = re.sub(r'^Answer:\s*', '', q["answer"], flags=re.IGNORECASE).strip()
+        correct_letter_match = re.match(r'^([A-Da-d])', correct_line)
+        correct_letter = correct_letter_match.group(1).upper() if correct_letter_match else ""
 
         vertical_rows.append(["NewQuestion", "MC"])
         vertical_rows.append(["ID", f"Q_DocxImport_{i:02d}"])
@@ -44,33 +37,37 @@ def convert_docx_to_vertical_csv(docx_path, output_csv_path):
         vertical_rows.append(["Points", 1])
         vertical_rows.append(["Difficulty", 5])
         vertical_rows.append(["Image", ""])
-        vertical_rows.append(["InitialText", ""])
 
-        # Append answer choices
-        for j, opt in enumerate(q["options"], start=1):
-            letter, text = opt.split('.', 1)
-            vertical_rows.append([f"Answer{j}", text.strip(' "“”')])
+        for option in q["options"]:
+            match = re.match(r'^([A-Da-d])\.\s*(.*)', option)
+            if not match:
+                continue
+            letter, text = match.groups()
+            score = 100 if letter.upper() == correct_letter else 0
+            vertical_rows.append(["Option", score, text])
 
-        vertical_rows.append(["AnswerKey", correct_option_text])
-        vertical_rows.append(["Hint", ""])
-        vertical_rows.append(["Feedback", ""])
-        vertical_rows.append([])
+        vertical_rows.append(["Hint", ""])      # Optional row
+        vertical_rows.append(["Feedback", ""])  # Optional row
+        vertical_rows.append([])                # Blank line = question separator
 
     df = pd.DataFrame(vertical_rows)
-    df.to_csv(output_csv_path, index=False, header=False)
-    print(f"\n✅ Successfully saved to: {output_csv_path}")
+    csv_buffer = BytesIO()
+    df.to_csv(csv_buffer, index=False, header=False, encoding="utf-8")
+    csv_buffer.seek(0)
+    return csv_buffer
 
-def main():
-    Tk().withdraw()  # Hide the root Tk window
-    print("📂 Please select the .docx file containing your quiz...")
-    docx_path = askopenfilename(filetypes=[("Word Documents", "*.docx")])
+# Streamlit Web UI
+st.title("📄 DOCX to Brightspace MC CSV Converter")
 
-    if not docx_path:
-        print("❌ No file selected. Exiting.")
-        return
+uploaded_file = st.file_uploader("Upload your quiz .docx file", type="docx")
 
-    output_csv_path = os.path.splitext(docx_path)[0] + "_VerticalFormat.csv"
-    convert_docx_to_vertical_csv(docx_path, output_csv_path)
-
-if __name__ == "__main__":
-    main()
+if uploaded_file:
+    if st.button("Convert to Brightspace CSV"):
+        csv_output = convert_docx_to_vertical_csv(uploaded_file)
+        st.success("✅ Conversion complete!")
+        st.download_button(
+            label="📥 Download CSV File",
+            data=csv_output,
+            file_name="converted_quiz.csv",
+            mime="text/csv"
+        )
