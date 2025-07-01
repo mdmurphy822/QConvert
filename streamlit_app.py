@@ -59,16 +59,16 @@ def convert_docx_to_vertical_csv(docx_bytes):
     return csv_buffer
 
 # Streamlit UI
-st.title("\ud83d\udcc4 DOCX to Brightspace MCQ CSV Converter")
+st.title("📄 DOCX to Brightspace MCQ CSV Converter")
 
 uploaded_file = st.file_uploader("Upload your quiz .docx file", type="docx")
 
 if uploaded_file:
     if st.button("Convert to Brightspace CSV"):
         csv_output = convert_docx_to_vertical_csv(uploaded_file)
-        st.success("\u2705 Conversion complete!")
+        st.success("✅ Conversion complete!")
         st.download_button(
-            label="\ud83d\udcc5 Download CSV File",
+            label="📥 Download CSV File",
             data=csv_output,
             file_name="converted_quiz.csv",
             mime="text/csv"
